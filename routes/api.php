@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\API\V1\AuthController;
+use App\Http\Controllers\API\V1\GroupController;
+use App\Http\Controllers\API\V1\GroupInvitationController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
@@ -12,5 +14,21 @@ Route::prefix('v1')->group(function (): void {
             Route::post('logout', [AuthController::class, 'logout']);
             Route::get('me', [AuthController::class, 'me']);
         });
+    });
+
+    Route::middleware('auth:sanctum')->group(function (): void {
+        Route::get('groups', [GroupController::class, 'index']);
+        Route::post('groups', [GroupController::class, 'store']);
+        Route::get('groups/{group}', [GroupController::class, 'show']);
+        Route::delete('groups/{group}', [GroupController::class, 'destroy']);
+        Route::post('groups/{group}/leave', [GroupController::class, 'leave']);
+        Route::get('groups/{group}/members', [GroupController::class, 'members']);
+        Route::delete('groups/{group}/members/{memberId}', [GroupController::class, 'removeMember']);
+        Route::post('groups/{group}/invite', [GroupController::class, 'inviteMember']);
+        Route::get('groups/{group}/balances', [GroupController::class, 'balances']);
+
+        Route::get('group-invitations/pending', [GroupInvitationController::class, 'pending']);
+        Route::post('group-invitations/{invitation}/accept', [GroupInvitationController::class, 'accept']);
+        Route::post('group-invitations/{invitation}/reject', [GroupInvitationController::class, 'reject']);
     });
 });
