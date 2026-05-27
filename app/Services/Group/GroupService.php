@@ -4,6 +4,7 @@ namespace App\Services\Group;
 
 use App\Enums\GroupInvitationStatus;
 use App\Enums\GroupMemberRole;
+use App\Enums\ExpenseStatus;
 use App\Models\Group;
 use App\Models\GroupInvitation;
 use App\Models\GroupMember;
@@ -18,7 +19,7 @@ class GroupService
     public function getUserGroups(User $user): Collection
     {
         return $user->groups()
-            ->withCount('members')
+            ->withCount(['members', 'expenses'])
             ->latest('groups.created_at')
             ->get();
     }
@@ -46,7 +47,7 @@ class GroupService
                 }
             }
 
-            return $group->loadCount('members');
+            return $group->loadCount(['members', 'expenses']);
         });
     }
 
@@ -57,7 +58,7 @@ class GroupService
     {
         $this->ensureGroupMember($group, $user);
 
-        return $group->load(['owner'])->loadCount('members');
+        return $group->load(['owner'])->loadCount(['members', 'expenses']);
     }
 
     /**
@@ -205,17 +206,75 @@ class GroupService
     {
         $this->ensureGroupMember($group, $user);
 
+        $openExpenses = $group->expenses()
+            ->with(['paidBy', 'splits.user'])
+            ->where('status', ExpenseStatus::Open->value)
+            ->get();
+
+        $pairwiseBalances = [];
+
+        foreach ($openExpenses as $expense) {
+            foreach ($expense->splits as $split) {
+                if ($split->user_id === $expense->paid_by_user_id) {
+                    continue;
+                }
+
+                $amount = (float) $split->amount;
+
+                if ($expense->paid_by_user_id === $user->id) {
+                    $pairwiseBalances[$split->user_id] = ($pairwiseBalances[$split->user_id] ?? 0) + $amount;
+                }
+
+                if ($split->user_id === $user->id) {
+                    $pairwiseBalances[$expense->paid_by_user_id] = ($pairwiseBalances[$expense->paid_by_user_id] ?? 0) - $amount;
+                }
+            }
+        }
+
+        $members = $group->members()->get()->keyBy('id');
+        $balances = collect($pairwiseBalances)
+            ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
+            ->map(function (float $amount, int $userId) use ($members): array {
+                $member = $members->get($userId);
+
+                return [
+                    'user' => [
+                        'id' => $member->id,
+                        'name' => $member->name,
+                        'email' => $member->email,
+                    ],
+                    'amount' => number_format(abs($amount), 2, '.', ''),
+                    'type' => $amount > 0 ? 'owed_to_you' : 'you_owe',
+                    'label' => $amount > 0
+                        ? "{$member->name} owes you"
+                        : "You owe {$member->name}",
+                ];
+            })
+            ->values()
+            ->all();
+
+        $currentUserNetAmount = collect($pairwiseBalances)->sum();
+        $currentUserType = match (true) {
+            $currentUserNetAmount > 0 => 'owed_to_you',
+            $currentUserNetAmount < 0 => 'you_owe',
+            default => 'settled',
+        };
+
         return [
             'group_id' => $group->id,
             'base_currency' => $group->base_currency,
-            'total_group_spend' => 0,
-            'open_unsettled_count' => 0,
+            'total_group_spend' => number_format((float) $group->expenses()->sum('amount'), 2, '.', ''),
+            'open_unsettled_count' => count($balances),
             'current_user_position' => [
-                'amount' => 0,
-                'type' => 'settled',
-                'label' => 'You are settled',
+                'amount' => number_format(abs($currentUserNetAmount), 2, '.', ''),
+                'type' => $currentUserType,
+                'label' => match ($currentUserType) {
+                    'owed_to_you' => 'You are owed',
+                    'you_owe' => 'You owe',
+                    default => 'You are settled',
+                },
             ],
-            'balances' => [],
+            'balances' => $balances,
         ];
     }
 

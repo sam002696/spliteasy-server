@@ -35,4 +35,9 @@ class Group extends Model
     {
         return $this->hasMany(GroupInvitation::class);
     }
+
+    public function expenses(): HasMany
+    {
+        return $this->hasMany(Expense::class);
+    }
 }

@@ -37,6 +37,16 @@ class User extends Authenticatable
         return $this->hasMany(GroupInvitation::class, 'invited_user_id');
     }
 
+    public function paidExpenses(): HasMany
+    {
+        return $this->hasMany(Expense::class, 'paid_by_user_id');
+    }
+
+    public function expenseSplits(): HasMany
+    {
+        return $this->hasMany(ExpenseSplit::class);
+    }
+
     /**
      * Get the attributes that should be cast.
      *

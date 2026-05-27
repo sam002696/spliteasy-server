@@ -16,7 +16,7 @@ class GroupResource extends JsonResource
             'base_currency' => $this->base_currency,
             'owner_id' => $this->owner_id,
             'members_count' => $this->whenCounted('members'),
-            'expenses_count' => 0,
+            'expenses_count' => $this->whenCounted('expenses'),
             'latest_expense' => null,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,

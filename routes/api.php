@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\API\V1\AuthController;
+use App\Http\Controllers\API\V1\ExpenseController;
 use App\Http\Controllers\API\V1\GroupController;
 use App\Http\Controllers\API\V1\GroupInvitationController;
 use Illuminate\Support\Facades\Route;
@@ -26,6 +27,10 @@ Route::prefix('v1')->group(function (): void {
         Route::delete('groups/{group}/members/{memberId}', [GroupController::class, 'removeMember']);
         Route::post('groups/{group}/invite', [GroupController::class, 'inviteMember']);
         Route::get('groups/{group}/balances', [GroupController::class, 'balances']);
+        Route::get('groups/{group}/expenses', [ExpenseController::class, 'index']);
+        Route::post('groups/{group}/expenses', [ExpenseController::class, 'store']);
+        Route::get('expenses/{expense}', [ExpenseController::class, 'show']);
+        Route::delete('expenses/{expense}', [ExpenseController::class, 'destroy']);
 
         Route::get('group-invitations/pending', [GroupInvitationController::class, 'pending']);
         Route::post('group-invitations/{invitation}/accept', [GroupInvitationController::class, 'accept']);
