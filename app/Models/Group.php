@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable(['owner_id', 'name', 'category', 'base_currency'])]
 class Group extends Model
@@ -39,5 +40,10 @@ class Group extends Model
     public function expenses(): HasMany
     {
         return $this->hasMany(Expense::class);
+    }
+
+    public function latestExpense(): HasOne
+    {
+        return $this->hasOne(Expense::class)->latestOfMany('expense_date');
     }
 }

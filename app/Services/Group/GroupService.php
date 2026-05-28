@@ -19,6 +19,7 @@ class GroupService
     public function getUserGroups(User $user): Collection
     {
         return $user->groups()
+            ->with(['latestExpense.paidBy', 'memberships.user', 'expenses.splits'])
             ->withCount(['members', 'expenses'])
             ->latest('groups.created_at')
             ->get();
@@ -58,7 +59,9 @@ class GroupService
     {
         $this->ensureGroupMember($group, $user);
 
-        return $group->load(['owner'])->loadCount(['members', 'expenses']);
+        return $group
+            ->load(['owner', 'latestExpense.paidBy', 'memberships.user', 'expenses.splits'])
+            ->loadCount(['members', 'expenses']);
     }
 
     /**
