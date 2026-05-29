@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\API\V1\AuthController;
+use App\Http\Controllers\API\V1\BalanceController;
 use App\Http\Controllers\API\V1\ExpenseController;
 use App\Http\Controllers\API\V1\GroupController;
 use App\Http\Controllers\API\V1\GroupInvitationController;
@@ -18,6 +19,8 @@ Route::prefix('v1')->group(function (): void {
     });
 
     Route::middleware('auth:sanctum')->group(function (): void {
+        Route::get('balances', [BalanceController::class, 'index']);
+
         Route::get('groups', [GroupController::class, 'index']);
         Route::post('groups', [GroupController::class, 'store']);
         Route::get('groups/{group}', [GroupController::class, 'show']);
