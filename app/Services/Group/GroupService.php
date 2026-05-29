@@ -16,13 +16,18 @@ use Illuminate\Validation\ValidationException;
 
 class GroupService
 {
-    public function getUserGroups(User $user): Collection
+    /**
+     * @throws ValidationException
+     */
+    public function getUserGroups(User $user, string $filter = 'all'): \Illuminate\Support\Collection
     {
-        return $user->groups()
+        $groups = $user->groups()
             ->with(['latestExpense.paidBy', 'memberships.user', 'expenses.splits'])
             ->withCount(['members', 'expenses'])
             ->latest('groups.created_at')
             ->get();
+
+        return $this->filterGroupsByUserPosition($groups, $user, $filter);
     }
 
     public function createGroup(User $owner, array $data): Group
@@ -392,5 +397,63 @@ class GroupService
                 'invitation' => ['This invitation has already been handled.'],
             ]);
         }
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    private function filterGroupsByUserPosition(Collection $groups, User $user, string $filter): \Illuminate\Support\Collection
+    {
+        $filter = strtolower($filter);
+
+        if (! in_array($filter, ['all', 'owed_to_you', 'you_owe', 'settled'], true)) {
+            throw ValidationException::withMessages([
+                'filter' => ['Invalid group filter. Allowed values are all, owed_to_you, you_owe, settled.'],
+            ]);
+        }
+
+        if ($filter === 'all') {
+            return $groups;
+        }
+
+        return $groups
+            ->filter(function (Group $group) use ($user, $filter): bool {
+                $netAmount = $this->calculateCurrentUserNetAmount($group, $user);
+                $hasExpenses = $group->relationLoaded('expenses') && $group->expenses->isNotEmpty();
+
+                return match ($filter) {
+                    'owed_to_you' => $netAmount > 0,
+                    'you_owe' => $netAmount < 0,
+                    'settled' => $hasExpenses && round($netAmount, 2) === 0.0,
+                };
+            })
+            ->values();
+    }
+
+    private function calculateCurrentUserNetAmount(Group $group, User $user): float
+    {
+        if (! $group->relationLoaded('expenses')) {
+            return 0.0;
+        }
+
+        $netAmount = 0.0;
+
+        foreach ($group->expenses->filter(fn ($expense): bool => $expense->status === ExpenseStatus::Open) as $expense) {
+            foreach ($expense->splits as $split) {
+                if ($split->user_id === $expense->paid_by_user_id) {
+                    continue;
+                }
+
+                if ($expense->paid_by_user_id === $user->id) {
+                    $netAmount += (float) $split->amount;
+                }
+
+                if ($split->user_id === $user->id) {
+                    $netAmount -= (float) $split->amount;
+                }
+            }
+        }
+
+        return $netAmount;
     }
 }

@@ -26,12 +26,17 @@ class GroupController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $groups = $this->groupService->getUserGroups($request->user());
+            $groups = $this->groupService->getUserGroups(
+                $request->user(),
+                $request->query('filter', 'all')
+            );
 
             return ApiResponseService::successResponse(
                 GroupResource::collection($groups),
                 'Groups fetched successfully.'
             );
+        } catch (ValidationException $exception) {
+            return ApiResponseService::handleValidationError($exception);
         } catch (Throwable $exception) {
             return ApiResponseService::handleUnexpectedError($exception);
         }
