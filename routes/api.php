@@ -6,6 +6,7 @@ use App\Http\Controllers\API\V1\ExpenseController;
 use App\Http\Controllers\API\V1\GroupController;
 use App\Http\Controllers\API\V1\GroupInvitationController;
 use App\Http\Controllers\API\V1\HomeController;
+use App\Http\Controllers\API\V1\NotificationController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
@@ -21,6 +22,9 @@ Route::prefix('v1')->group(function (): void {
 
     Route::middleware('auth:sanctum')->group(function (): void {
         Route::get('home', [HomeController::class, 'index']);
+        Route::get('notifications', [NotificationController::class, 'index']);
+        Route::patch('notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+        Route::patch('notifications/{notification}/read', [NotificationController::class, 'markAsRead']);
 
         Route::get('balances', [BalanceController::class, 'index']);
         Route::post('balances/groups/{group}/users/{user}/settle', [BalanceController::class, 'markSettled']);
