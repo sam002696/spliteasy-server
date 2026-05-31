@@ -5,6 +5,7 @@ use App\Http\Controllers\API\V1\BalanceController;
 use App\Http\Controllers\API\V1\ExpenseController;
 use App\Http\Controllers\API\V1\GroupController;
 use App\Http\Controllers\API\V1\GroupInvitationController;
+use App\Http\Controllers\API\V1\HomeController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
@@ -19,6 +20,8 @@ Route::prefix('v1')->group(function (): void {
     });
 
     Route::middleware('auth:sanctum')->group(function (): void {
+        Route::get('home', [HomeController::class, 'index']);
+
         Route::get('balances', [BalanceController::class, 'index']);
         Route::post('balances/groups/{group}/users/{user}/settle', [BalanceController::class, 'markSettled']);
 
