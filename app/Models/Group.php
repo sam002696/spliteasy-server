@@ -51,4 +51,9 @@ class Group extends Model
     {
         return $this->hasOne(Expense::class)->latestOfMany('expense_date');
     }
+
+    public function activities(): HasMany
+    {
+        return $this->hasMany(ActivityLog::class);
+    }
 }

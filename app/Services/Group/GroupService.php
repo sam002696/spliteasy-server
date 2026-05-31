@@ -2,13 +2,15 @@
 
 namespace App\Services\Group;
 
+use App\Enums\ActivityType;
+use App\Enums\ExpenseStatus;
 use App\Enums\GroupInvitationStatus;
 use App\Enums\GroupMemberRole;
-use App\Enums\ExpenseStatus;
 use App\Models\Group;
 use App\Models\GroupInvitation;
 use App\Models\GroupMember;
 use App\Models\User;
+use App\Services\Activity\ActivityLogService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +18,10 @@ use Illuminate\Validation\ValidationException;
 
 class GroupService
 {
+    public function __construct(
+        private readonly ActivityLogService $activityLogService
+    ) {}
+
     /**
      * @throws ValidationException
      */
@@ -47,6 +53,19 @@ class GroupService
                 'joined_at' => now(),
             ]);
 
+            $this->activityLogService->record(
+                ActivityType::GroupCreated,
+                "{$owner->name} created {$group->name}",
+                $group,
+                $owner,
+                [
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                    'category' => $group->category,
+                ],
+                [$owner]
+            );
+
             foreach ($data['member_emails'] ?? [] as $email) {
                 if (strtolower($email) !== strtolower($owner->email)) {
                     $this->createInvitationByEmail($group, $owner, $email);
@@ -76,7 +95,21 @@ class GroupService
     {
         $this->ensureGroupOwner($group, $user);
 
-        $group->delete();
+        DB::transaction(function () use ($group, $user): void {
+            $this->activityLogService->record(
+                ActivityType::GroupDeleted,
+                "{$user->name} deleted {$group->name}",
+                $group,
+                $user,
+                [
+                    'group_id' => $group->id,
+                    'group_name' => $group->name,
+                ],
+                $this->activityLogService->groupMemberIds($group)
+            );
+
+            $group->delete();
+        });
     }
 
     /**
@@ -96,6 +129,20 @@ class GroupService
         if (! $membership) {
             throw new AuthorizationException('You are not a member of this group.');
         }
+
+        $this->activityLogService->record(
+            ActivityType::GroupMemberLeft,
+            "{$user->name} left {$group->name}",
+            $group,
+            $user,
+            [
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'user_id' => $user->id,
+                'user_name' => $user->name,
+            ],
+            $this->activityLogService->groupMemberIds($group)
+        );
 
         $membership->delete();
     }
@@ -124,6 +171,22 @@ class GroupService
                 'member' => ['User is not a member of this group.'],
             ]);
         }
+
+        $removedUser = User::query()->findOrFail($memberId);
+
+        $this->activityLogService->record(
+            ActivityType::GroupMemberRemoved,
+            "{$removedUser->name} was removed from {$group->name}",
+            $group,
+            $owner,
+            [
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'removed_user_id' => $removedUser->id,
+                'removed_user_name' => $removedUser->name,
+            ],
+            $this->activityLogService->groupMemberIds($group)
+        );
 
         $membership->delete();
     }
@@ -172,7 +235,24 @@ class GroupService
                 'joined_at' => now(),
             ]);
 
-            return $invitation->load(['group', 'invitedBy']);
+            $invitation = $invitation->load(['group', 'invitedBy', 'invitedUser']);
+
+            $this->activityLogService->record(
+                ActivityType::GroupInvitationAccepted,
+                "{$invitation->invitedUser->name} joined {$invitation->group->name}",
+                $invitation->group,
+                $invitation->invitedUser,
+                [
+                    'group_id' => $invitation->group_id,
+                    'group_name' => $invitation->group->name,
+                    'invitation_id' => $invitation->id,
+                    'user_id' => $invitation->invited_user_id,
+                    'user_name' => $invitation->invitedUser->name,
+                ],
+                $this->activityLogService->groupMemberIds($invitation->group)
+            );
+
+            return $invitation;
         });
     }
 
@@ -190,7 +270,24 @@ class GroupService
             'responded_at' => now(),
         ]);
 
-        return $invitation->load(['group', 'invitedBy']);
+        $invitation = $invitation->load(['group', 'invitedBy', 'invitedUser']);
+
+        $this->activityLogService->record(
+            ActivityType::GroupInvitationRejected,
+            "{$invitation->invitedUser->name} rejected {$invitation->group->name} invitation",
+            $invitation->group,
+            $invitation->invitedUser,
+            [
+                'group_id' => $invitation->group_id,
+                'group_name' => $invitation->group->name,
+                'invitation_id' => $invitation->id,
+                'user_id' => $invitation->invited_user_id,
+                'user_name' => $invitation->invitedUser->name,
+            ],
+            [$invitation->invited_by_user_id, $invitation->invited_user_id]
+        );
+
+        return $invitation;
     }
 
     /**
@@ -337,12 +434,29 @@ class GroupService
             ]);
         }
 
-        return GroupInvitation::query()->create([
+        $invitation = GroupInvitation::query()->create([
             'group_id' => $group->id,
             'invited_by_user_id' => $owner->id,
             'invited_user_id' => $invitedUser->id,
             'status' => GroupInvitationStatus::Pending,
         ])->load(['group', 'invitedBy']);
+
+        $this->activityLogService->record(
+            ActivityType::GroupInvitationSent,
+            "{$owner->name} invited {$invitedUser->name} to {$group->name}",
+            $group,
+            $owner,
+            [
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'invitation_id' => $invitation->id,
+                'invited_user_id' => $invitedUser->id,
+                'invited_user_name' => $invitedUser->name,
+            ],
+            [$owner->id, $invitedUser->id]
+        );
+
+        return $invitation;
     }
 
     /**

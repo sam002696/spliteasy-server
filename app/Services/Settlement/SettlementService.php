@@ -2,17 +2,23 @@
 
 namespace App\Services\Settlement;
 
+use App\Enums\ActivityType;
 use App\Enums\ExpenseStatus;
 use App\Models\Group;
 use App\Models\GroupMember;
 use App\Models\Settlement;
 use App\Models\User;
+use App\Services\Activity\ActivityLogService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SettlementService
 {
+    public function __construct(
+        private readonly ActivityLogService $activityLogService
+    ) {}
+
     /**
      * @throws AuthorizationException
      * @throws ValidationException
@@ -49,7 +55,26 @@ class SettlementService
 
             $this->markCoveredExpenseSplitsAsSettled($group, $currentUser, $paidToUser, (float) $settlement->amount);
 
-            return $settlement->load(['group', 'paidBy', 'paidTo']);
+            $settlement = $settlement->load(['group', 'paidBy', 'paidTo']);
+
+            $this->activityLogService->record(
+                ActivityType::SettlementCreated,
+                "{$currentUser->name} settled with {$paidToUser->name}",
+                $group,
+                $currentUser,
+                [
+                    'settlement_id' => $settlement->id,
+                    'paid_by_user_id' => $currentUser->id,
+                    'paid_by_name' => $currentUser->name,
+                    'paid_to_user_id' => $paidToUser->id,
+                    'paid_to_name' => $paidToUser->name,
+                    'amount' => $settlement->amount,
+                    'currency' => $settlement->currency,
+                ],
+                [$currentUser->id, $paidToUser->id]
+            );
+
+            return $settlement;
         });
     }
 

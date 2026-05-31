@@ -2,10 +2,10 @@
 
 namespace App\Services\Home;
 
+use App\Enums\ActivityType;
 use App\Enums\ExpenseStatus;
-use App\Models\Expense;
+use App\Models\ActivityLog;
 use App\Models\Group;
-use App\Models\Settlement;
 use App\Models\User;
 use Illuminate\Support\Collection;
 
@@ -82,90 +82,88 @@ class HomeService
 
     private function buildRecentActivities(User $user): array
     {
-        $expenses = Expense::query()
-            ->with(['group', 'createdBy', 'paidBy', 'splits'])
-            ->whereHas('group.members', fn ($query) => $query->where('users.id', $user->id))
+        return ActivityLog::query()
+            ->with(['group', 'actor'])
+            ->whereHas('recipients', fn ($query) => $query->where('user_id', $user->id))
             ->latest()
             ->limit(4)
             ->get()
-            ->map(fn (Expense $expense): array => $this->expenseActivity($expense, $user));
-
-        $settlements = Settlement::query()
-            ->with(['group', 'paidBy', 'paidTo'])
-            ->where(function ($query) use ($user): void {
-                $query->where('paid_by_user_id', $user->id)
-                    ->orWhere('paid_to_user_id', $user->id);
-            })
-            ->latest('settled_at')
-            ->limit(4)
-            ->get()
-            ->map(fn (Settlement $settlement): array => $this->settlementActivity($settlement, $user));
-
-        return $expenses
-            ->concat($settlements)
-            ->sortByDesc('created_at')
-            ->take(4)
-            ->values()
+            ->map(fn (ActivityLog $activity): array => $this->activityData($activity, $user))
             ->all();
     }
 
-    private function expenseActivity(Expense $expense, User $user): array
+    private function activityData(ActivityLog $activity, User $user): array
     {
-        $isPayer = $expense->paid_by_user_id === $user->id;
-        $amount = $isPayer
-            ? $expense->splits
-                ->filter(fn ($split): bool => $split->user_id !== $user->id && is_null($split->settled_at))
-                ->sum(fn ($split): float => (float) $split->amount)
-            : (float) ($expense->splits->firstWhere('user_id', $user->id)?->amount ?? 0);
-        $type = $isPayer ? 'owed_to_you' : 'you_owe';
+        $position = $this->activityPosition($activity, $user);
 
         return [
-            'id' => "expense:{$expense->id}",
-            'type' => 'expense_added',
-            'title' => "{$expense->createdBy->name} added {$expense->description}",
-            'subtitle' => $expense->group->name,
-            'amount' => number_format($amount, 2, '.', ''),
-            'currency' => $expense->currency,
-            'position_type' => $type,
-            'position_label' => $type === 'owed_to_you' ? 'You are owed' : 'You owe',
-            'actor' => [
-                'id' => $expense->createdBy->id,
-                'name' => $expense->createdBy->name,
-                'initials' => $this->initials($expense->createdBy->name),
-            ],
-            'group' => [
-                'id' => $expense->group->id,
-                'name' => $expense->group->name,
-            ],
-            'created_at' => $expense->created_at,
+            'id' => $activity->id,
+            'type' => $activity->type,
+            'title' => $activity->title,
+            'subtitle' => $activity->group?->name,
+            'amount' => $position['amount'],
+            'currency' => $position['currency'],
+            'position_type' => $position['type'],
+            'position_label' => $position['label'],
+            'actor' => $activity->actor ? [
+                'id' => $activity->actor->id,
+                'name' => $activity->actor->name,
+                'initials' => $this->initials($activity->actor->name),
+            ] : null,
+            'group' => $activity->group ? [
+                'id' => $activity->group->id,
+                'name' => $activity->group->name,
+            ] : null,
+            'metadata' => $activity->metadata,
+            'created_at' => $activity->created_at,
         ];
     }
 
-    private function settlementActivity(Settlement $settlement, User $user): array
+    private function activityPosition(ActivityLog $activity, User $user): array
     {
-        $otherUser = $settlement->paid_by_user_id === $user->id
-            ? $settlement->paidTo
-            : $settlement->paidBy;
+        $metadata = $activity->metadata ?? [];
+
+        if ($activity->type === ActivityType::ExpenseCreated->value) {
+            $isPayer = (int) ($metadata['paid_by_user_id'] ?? 0) === $user->id;
+            $splits = collect($metadata['splits'] ?? []);
+
+            if (! $isPayer && ! $splits->has($user->id)) {
+                return [
+                    'amount' => null,
+                    'currency' => $metadata['currency'] ?? null,
+                    'type' => 'info',
+                    'label' => null,
+                ];
+            }
+
+            $amount = $isPayer
+                ? $splits
+                    ->reject(fn ($amount, $userId): bool => (int) $userId === $user->id)
+                    ->sum(fn ($amount): float => (float) $amount)
+                : (float) ($splits[$user->id] ?? 0);
+
+            return [
+                'amount' => number_format($amount, 2, '.', ''),
+                'currency' => $metadata['currency'] ?? null,
+                'type' => $isPayer ? 'owed_to_you' : 'you_owe',
+                'label' => $isPayer ? 'You are owed' : 'You owe',
+            ];
+        }
+
+        if ($activity->type === ActivityType::SettlementCreated->value) {
+            return [
+                'amount' => $metadata['amount'] ?? '0.00',
+                'currency' => $metadata['currency'] ?? null,
+                'type' => 'settled',
+                'label' => 'Settled',
+            ];
+        }
 
         return [
-            'id' => "settlement:{$settlement->id}",
-            'type' => 'settlement_created',
-            'title' => "{$settlement->paidBy->name} settled with {$settlement->paidTo->name}",
-            'subtitle' => $settlement->group->name,
-            'amount' => $settlement->amount,
-            'currency' => $settlement->currency,
-            'position_type' => 'settled',
-            'position_label' => 'Settled',
-            'actor' => [
-                'id' => $otherUser->id,
-                'name' => $otherUser->name,
-                'initials' => $this->initials($otherUser->name),
-            ],
-            'group' => [
-                'id' => $settlement->group->id,
-                'name' => $settlement->group->name,
-            ],
-            'created_at' => $settlement->settled_at,
+            'amount' => null,
+            'currency' => null,
+            'type' => 'info',
+            'label' => null,
         ];
     }
 

@@ -2,6 +2,7 @@
 
 namespace App\Services\Expense;
 
+use App\Enums\ActivityType;
 use App\Enums\ExpenseSplitMethod;
 use App\Enums\ExpenseStatus;
 use App\Models\Expense;
@@ -9,6 +10,7 @@ use App\Models\ExpenseSplit;
 use App\Models\Group;
 use App\Models\GroupMember;
 use App\Models\User;
+use App\Services\Activity\ActivityLogService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +18,10 @@ use Illuminate\Validation\ValidationException;
 
 class ExpenseService
 {
+    public function __construct(
+        private readonly ActivityLogService $activityLogService
+    ) {}
+
     /**
      * @throws AuthorizationException
      */
@@ -83,7 +89,30 @@ class ExpenseService
                 ]);
             }
 
-            return $expense->load(['paidBy', 'createdBy', 'splits.user']);
+            $expense = $expense->load(['paidBy', 'createdBy', 'splits.user']);
+
+            $this->activityLogService->record(
+                ActivityType::ExpenseCreated,
+                "{$creator->name} added {$expense->description}",
+                $group,
+                $creator,
+                [
+                    'expense_id' => $expense->id,
+                    'description' => $expense->description,
+                    'amount' => $expense->amount,
+                    'currency' => $expense->currency,
+                    'paid_by_user_id' => $expense->paid_by_user_id,
+                    'paid_by_name' => $expense->paidBy->name,
+                    'splits' => $expense->splits
+                        ->mapWithKeys(fn ($split): array => [
+                            $split->user_id => $split->amount,
+                        ])
+                        ->all(),
+                ],
+                $this->activityLogService->groupMemberIds($group)
+            );
+
+            return $expense;
         });
     }
 
