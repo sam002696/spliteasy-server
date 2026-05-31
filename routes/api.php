@@ -28,6 +28,7 @@ Route::prefix('v1')->group(function (): void {
 
         Route::get('balances', [BalanceController::class, 'index']);
         Route::post('balances/groups/{group}/users/{user}/settle', [BalanceController::class, 'markSettled']);
+        Route::post('balances/groups/{group}/users/{user}/remind', [BalanceController::class, 'remind']);
 
         Route::get('groups', [GroupController::class, 'index']);
         Route::post('groups', [GroupController::class, 'store']);

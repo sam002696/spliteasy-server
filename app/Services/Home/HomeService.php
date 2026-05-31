@@ -159,6 +159,15 @@ class HomeService
             ];
         }
 
+        if ($activity->type === ActivityType::BalanceReminderSent->value) {
+            return [
+                'amount' => $metadata['amount'] ?? '0.00',
+                'currency' => $metadata['currency'] ?? null,
+                'type' => 'you_owe',
+                'label' => 'Reminder',
+            ];
+        }
+
         return [
             'amount' => null,
             'currency' => null,

@@ -10,6 +10,7 @@ class NotificationResource extends JsonResource
     public function toArray(Request $request): array
     {
         $activity = $this->activityLog;
+        $metadata = $activity?->metadata ?? [];
 
         return [
             'id' => $this->id,
@@ -17,6 +18,8 @@ class NotificationResource extends JsonResource
             'type' => $activity?->type,
             'title' => $activity?->title,
             'subtitle' => $activity?->group?->name,
+            'amount' => $metadata['amount'] ?? null,
+            'currency' => $metadata['currency'] ?? null,
             'is_read' => ! is_null($this->read_at),
             'read_at' => $this->read_at,
             'actor' => $activity?->actor ? [
@@ -28,7 +31,7 @@ class NotificationResource extends JsonResource
                 'id' => $activity->group->id,
                 'name' => $activity->group->name,
             ] : null,
-            'metadata' => $activity?->metadata,
+            'metadata' => $metadata,
             'created_at' => $activity?->created_at,
         ];
     }

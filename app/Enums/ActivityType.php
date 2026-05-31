@@ -13,4 +13,5 @@ enum ActivityType: string
     case GroupInvitationRejected = 'group.invitation.rejected';
     case ExpenseCreated = 'expense.created';
     case SettlementCreated = 'settlement.created';
+    case BalanceReminderSent = 'balance.reminder.sent';
 }

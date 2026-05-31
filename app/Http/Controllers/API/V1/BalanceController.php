@@ -71,4 +71,35 @@ class BalanceController extends Controller
             return ApiResponseService::handleUnexpectedError($exception);
         }
     }
+
+    public function remind(Group $group, User $user, Request $request): JsonResponse
+    {
+        try {
+            $activity = $this->balanceService->sendReminder($group, $request->user(), $user);
+
+            return ApiResponseService::successResponse([
+                'id' => $activity->id,
+                'type' => $activity->type,
+                'title' => $activity->title,
+                'group' => [
+                    'id' => $group->id,
+                    'name' => $group->name,
+                    'base_currency' => $group->base_currency,
+                ],
+                'reminded_user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                ],
+                'metadata' => $activity->metadata,
+                'created_at' => $activity->created_at,
+            ], 'Reminder sent successfully.');
+        } catch (AuthorizationException $exception) {
+            return ApiResponseService::errorResponse($exception->getMessage(), 403);
+        } catch (ValidationException $exception) {
+            return ApiResponseService::handleValidationError($exception);
+        } catch (Throwable $exception) {
+            return ApiResponseService::handleUnexpectedError($exception);
+        }
+    }
 }

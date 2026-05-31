@@ -2,14 +2,23 @@
 
 namespace App\Services\Balance;
 
+use App\Enums\ActivityType;
 use App\Enums\ExpenseStatus;
+use App\Models\ActivityLog;
 use App\Models\Group;
+use App\Models\GroupMember;
 use App\Models\User;
+use App\Services\Activity\ActivityLogService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 class BalanceService
 {
+    public function __construct(
+        private readonly ActivityLogService $activityLogService
+    ) {}
+
     /**
      * @throws ValidationException
      */
@@ -46,6 +55,48 @@ class BalanceService
             ],
             'balances' => $balances->all(),
         ];
+    }
+
+    /**
+     * @throws AuthorizationException
+     * @throws ValidationException
+     */
+    public function sendReminder(Group $group, User $sender, User $debtor): ActivityLog
+    {
+        $this->ensureGroupMember($group, $sender);
+        $this->ensureGroupMember($group, $debtor);
+
+        if ($sender->id === $debtor->id) {
+            throw ValidationException::withMessages([
+                'user' => ['You cannot remind yourself.'],
+            ]);
+        }
+
+        $amountOwed = $this->calculateAmountOwedByUser($group, $sender, $debtor);
+
+        if ($amountOwed <= 0) {
+            throw ValidationException::withMessages([
+                'balance' => ['This user does not owe you in this group.'],
+            ]);
+        }
+
+        return $this->activityLogService->record(
+            ActivityType::BalanceReminderSent,
+            "{$sender->name} reminded you to settle {$group->name}",
+            $group,
+            $sender,
+            [
+                'group_id' => $group->id,
+                'group_name' => $group->name,
+                'reminder_from_user_id' => $sender->id,
+                'reminder_from_name' => $sender->name,
+                'debtor_user_id' => $debtor->id,
+                'debtor_name' => $debtor->name,
+                'amount' => number_format($amountOwed, 2, '.', ''),
+                'currency' => $group->base_currency,
+            ],
+            [$debtor->id]
+        );
     }
 
     private function buildGroupBalances(Group $group, User $user): Collection
@@ -150,6 +201,46 @@ class BalanceService
             'you_owe' => $balance['type'] === 'you_owe',
             'settled' => $balance['type'] === 'settled',
         };
+    }
+
+    /**
+     * @throws AuthorizationException
+     */
+    private function ensureGroupMember(Group $group, User $user): void
+    {
+        $isMember = GroupMember::query()
+            ->where('group_id', $group->id)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        if (! $isMember) {
+            throw new AuthorizationException('User is not a member of this group.');
+        }
+    }
+
+    private function calculateAmountOwedByUser(Group $group, User $owedToUser, User $debtor): float
+    {
+        $group->loadMissing(['expenses.splits']);
+
+        $amount = 0.0;
+
+        foreach ($group->expenses->filter(fn ($expense): bool => $expense->status === ExpenseStatus::Open) as $expense) {
+            foreach ($expense->splits as $split) {
+                if ($split->settled_at || $split->user_id === $expense->paid_by_user_id) {
+                    continue;
+                }
+
+                if ($expense->paid_by_user_id === $owedToUser->id && $split->user_id === $debtor->id) {
+                    $amount += (float) $split->amount;
+                }
+
+                if ($expense->paid_by_user_id === $debtor->id && $split->user_id === $owedToUser->id) {
+                    $amount -= (float) $split->amount;
+                }
+            }
+        }
+
+        return round($amount, 2);
     }
 
     private function settledPercentage(float $grossAmount, float $netAmount): int
