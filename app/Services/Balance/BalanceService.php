@@ -52,6 +52,7 @@ class BalanceService
     {
         $pairBalances = [];
         $pairExpenses = [];
+        $pairGrossAmounts = [];
         $pairUsers = [];
 
         foreach ($group->expenses as $expense) {
@@ -79,15 +80,19 @@ class BalanceService
                     continue;
                 }
 
-                $pairBalances[$otherUserId] = ($pairBalances[$otherUserId] ?? 0) + (
-                    $expense->status === ExpenseStatus::Open ? $amount : 0
-                );
-                $pairExpenses[$otherUserId][] = $expense;
+                if ($otherUserId) {
+                    $pairExpenses[$otherUserId][] = $expense;
+                }
+
+                if ($otherUserId && $expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
+                    $pairBalances[$otherUserId] = ($pairBalances[$otherUserId] ?? 0) + $amount;
+                    $pairGrossAmounts[$otherUserId] = ($pairGrossAmounts[$otherUserId] ?? 0) + abs($amount);
+                }
             }
         }
 
         return collect($pairExpenses)
-            ->map(function (array $expenses, int $otherUserId) use ($group, $pairBalances, $pairUsers): array {
+            ->map(function (array $expenses, int $otherUserId) use ($group, $pairBalances, $pairGrossAmounts, $pairUsers): array {
                 $otherUser = $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId);
                 $netAmount = round($pairBalances[$otherUserId] ?? 0, 2);
                 $type = match (true) {
@@ -123,7 +128,10 @@ class BalanceService
                         'expense_date' => $latestExpense->expense_date,
                         'status' => $latestExpense->status->value,
                     ] : null,
-                    'settled_percentage' => $this->settledPercentage($expenses),
+                    'settled_percentage' => $this->settledPercentage(
+                        (float) ($pairGrossAmounts[$otherUserId] ?? 0),
+                        $netAmount
+                    ),
                     'action' => match ($type) {
                         'owed_to_you' => 'remind',
                         'you_owe' => 'mark_settled',
@@ -144,17 +152,15 @@ class BalanceService
         };
     }
 
-    private function settledPercentage(array $expenses): int
+    private function settledPercentage(float $grossAmount, float $netAmount): int
     {
-        if (count($expenses) === 0) {
-            return 0;
+        if ($grossAmount <= 0) {
+            return round($netAmount, 2) === 0.0 ? 100 : 0;
         }
 
-        $settledCount = collect($expenses)
-            ->filter(fn ($expense): bool => $expense->status === ExpenseStatus::Settled)
-            ->count();
+        $settledAmount = max($grossAmount - abs($netAmount), 0);
 
-        return (int) round(($settledCount / count($expenses)) * 100);
+        return (int) min(round(($settledAmount / $grossAmount) * 100), 100);
     }
 
     private function label(string $type, string $name): string

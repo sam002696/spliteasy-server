@@ -47,6 +47,16 @@ class User extends Authenticatable
         return $this->hasMany(ExpenseSplit::class);
     }
 
+    public function settlementsPaid(): HasMany
+    {
+        return $this->hasMany(Settlement::class, 'paid_by_user_id');
+    }
+
+    public function settlementsReceived(): HasMany
+    {
+        return $this->hasMany(Settlement::class, 'paid_to_user_id');
+    }
+
     /**
      * Get the attributes that should be cast.
      *

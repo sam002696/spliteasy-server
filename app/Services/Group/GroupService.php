@@ -223,6 +223,10 @@ class GroupService
 
         foreach ($openExpenses as $expense) {
             foreach ($expense->splits as $split) {
+                if ($split->settled_at) {
+                    continue;
+                }
+
                 if ($split->user_id === $expense->paid_by_user_id) {
                     continue;
                 }
@@ -440,6 +444,10 @@ class GroupService
 
         foreach ($group->expenses->filter(fn ($expense): bool => $expense->status === ExpenseStatus::Open) as $expense) {
             foreach ($expense->splits as $split) {
+                if ($split->settled_at) {
+                    continue;
+                }
+
                 if ($split->user_id === $expense->paid_by_user_id) {
                     continue;
                 }

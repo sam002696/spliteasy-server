@@ -42,6 +42,11 @@ class Group extends Model
         return $this->hasMany(Expense::class);
     }
 
+    public function settlements(): HasMany
+    {
+        return $this->hasMany(Settlement::class);
+    }
+
     public function latestExpense(): HasOne
     {
         return $this->hasOne(Expense::class)->latestOfMany('expense_date');
