@@ -2,6 +2,7 @@
 
 namespace App\Services\Notification;
 
+use App\Enums\ActivityType;
 use App\Models\ActivityLog;
 use App\Models\ActivityRecipient;
 use App\Models\User;
@@ -29,6 +30,7 @@ class NotificationService
         return ActivityRecipient::query()
             ->with(['activityLog.group', 'activityLog.actor'])
             ->where('user_id', $user->id)
+            ->whereHas('activityLog', fn ($query) => $query->where('type', '!=', ActivityType::GroupCreated->value))
             ->when($filter === 'unread', fn ($query) => $query->whereNull('read_at'))
             ->when($filter === 'read', fn ($query) => $query->whereNotNull('read_at'))
             ->orderByDesc(
@@ -44,6 +46,7 @@ class NotificationService
     {
         return ActivityRecipient::query()
             ->where('user_id', $user->id)
+            ->whereHas('activityLog', fn ($query) => $query->where('type', '!=', ActivityType::GroupCreated->value))
             ->whereNull('read_at')
             ->count();
     }
@@ -68,6 +71,7 @@ class NotificationService
     {
         return ActivityRecipient::query()
             ->where('user_id', $user->id)
+            ->whereHas('activityLog', fn ($query) => $query->where('type', '!=', ActivityType::GroupCreated->value))
             ->whereNull('read_at')
             ->update([
                 'read_at' => now(),

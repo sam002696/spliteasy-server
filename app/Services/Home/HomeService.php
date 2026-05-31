@@ -85,6 +85,7 @@ class HomeService
         return ActivityLog::query()
             ->with(['group', 'actor'])
             ->whereHas('recipients', fn ($query) => $query->where('user_id', $user->id))
+            ->where('type', '!=', ActivityType::GroupCreated->value)
             ->latest()
             ->limit(4)
             ->get()
@@ -99,7 +100,7 @@ class HomeService
         return [
             'id' => $activity->id,
             'type' => $activity->type,
-            'title' => $activity->title,
+            'title' => $this->activityTitle($activity, $user),
             'subtitle' => $activity->group?->name,
             'amount' => $position['amount'],
             'currency' => $position['currency'],
@@ -174,6 +175,48 @@ class HomeService
             'type' => 'info',
             'label' => null,
         ];
+    }
+
+    private function activityTitle(ActivityLog $activity, User $user): string
+    {
+        $metadata = $activity->metadata ?? [];
+        $actorIsCurrentUser = $activity->actor_user_id === $user->id;
+
+        return match ($activity->type) {
+            ActivityType::ExpenseCreated->value => $actorIsCurrentUser
+                ? 'You added '.($metadata['description'] ?? 'an expense')
+                : $activity->title,
+
+            ActivityType::SettlementCreated->value => $actorIsCurrentUser
+                ? 'You settled with '.($metadata['paid_to_name'] ?? 'a member')
+                : $activity->title,
+
+            ActivityType::GroupDeleted->value => $actorIsCurrentUser
+                ? 'You deleted '.($metadata['group_name'] ?? 'a group')
+                : $activity->title,
+
+            ActivityType::GroupMemberLeft->value => $actorIsCurrentUser
+                ? 'You left '.($metadata['group_name'] ?? 'a group')
+                : $activity->title,
+
+            ActivityType::GroupMemberRemoved->value => $actorIsCurrentUser
+                ? 'You removed '.($metadata['removed_user_name'] ?? 'a member')
+                : $activity->title,
+
+            ActivityType::GroupInvitationSent->value => $actorIsCurrentUser
+                ? 'You invited '.($metadata['invited_user_name'] ?? 'a member')
+                : $activity->title,
+
+            ActivityType::GroupInvitationAccepted->value => $actorIsCurrentUser
+                ? 'You joined '.($metadata['group_name'] ?? 'a group')
+                : $activity->title,
+
+            ActivityType::GroupInvitationRejected->value => $actorIsCurrentUser
+                ? 'You rejected '.($metadata['group_name'] ?? 'a group').' invitation'
+                : $activity->title,
+
+            default => $activity->title,
+        };
     }
 
     private function initials(string $name): string

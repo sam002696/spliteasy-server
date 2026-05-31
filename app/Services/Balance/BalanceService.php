@@ -82,7 +82,7 @@ class BalanceService
 
         return $this->activityLogService->record(
             ActivityType::BalanceReminderSent,
-            "{$sender->name} reminded you to settle {$group->name}",
+            "{$sender->name} reminded you to settle {$group->base_currency} " . number_format($amountOwed, 2),
             $group,
             $sender,
             [
