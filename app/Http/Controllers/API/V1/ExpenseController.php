@@ -80,6 +80,8 @@ class ExpenseController extends Controller
             return ApiResponseService::successResponse(null, 'Expense deleted successfully.');
         } catch (AuthorizationException $exception) {
             return ApiResponseService::errorResponse($exception->getMessage(), 403);
+        } catch (ValidationException $exception) {
+            return ApiResponseService::handleValidationError($exception);
         } catch (Throwable $exception) {
             return ApiResponseService::handleUnexpectedError($exception);
         }

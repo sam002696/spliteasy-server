@@ -118,6 +118,7 @@ class ExpenseService
 
     /**
      * @throws AuthorizationException
+     * @throws ValidationException
      */
     public function deleteExpense(Expense $expense, User $user): void
     {
@@ -126,6 +127,12 @@ class ExpenseService
 
         if ($expense->created_by_user_id !== $user->id && $group->owner_id !== $user->id) {
             throw new AuthorizationException('Only the expense creator or group owner can delete this expense.');
+        }
+
+        if ($expense->status === ExpenseStatus::Settled) {
+            throw ValidationException::withMessages([
+                'expense' => ['You cannot delete an expense that has been settled.'],
+            ]);
         }
 
         $expense->delete();

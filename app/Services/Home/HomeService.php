@@ -85,7 +85,10 @@ class HomeService
         return ActivityLog::query()
             ->with(['group', 'actor'])
             ->whereHas('recipients', fn ($query) => $query->where('user_id', $user->id))
-            ->where('type', '!=', ActivityType::GroupCreated->value)
+            ->whereNotIn('type', [
+                ActivityType::GroupCreated->value,
+                ActivityType::GroupDeleted->value,
+            ])
             ->latest()
             ->limit(4)
             ->get()

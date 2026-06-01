@@ -172,6 +172,8 @@ class GroupService
             ]);
         }
 
+        $this->ensureMemberHasNoUnsettledBalances($group, $memberId);
+
         $removedUser = User::query()->findOrFail($memberId);
 
         $this->activityLogService->record(
@@ -493,6 +495,40 @@ class GroupService
             ->where('group_id', $group->id)
             ->where('user_id', $userId)
             ->exists();
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    private function ensureMemberHasNoUnsettledBalances(Group $group, int $memberId): void
+    {
+        $hasUnsettledBalances = $group->expenses()
+            ->where('status', ExpenseStatus::Open->value)
+            ->where(function ($query) use ($memberId): void {
+                $query
+                    ->where(function ($query) use ($memberId): void {
+                        $query
+                            ->where('paid_by_user_id', $memberId)
+                            ->whereHas('splits', function ($query) use ($memberId): void {
+                                $query
+                                    ->where('user_id', '!=', $memberId)
+                                    ->whereNull('settled_at');
+                            });
+                    })
+                    ->orWhereHas('splits', function ($query) use ($memberId): void {
+                        $query
+                            ->where('user_id', $memberId)
+                            ->whereNull('settled_at')
+                            ->whereColumn('expense_splits.user_id', '!=', 'expenses.paid_by_user_id');
+                    });
+            })
+            ->exists();
+
+        if ($hasUnsettledBalances) {
+            throw ValidationException::withMessages([
+                'member' => ['This member has unsettled balances and cannot be removed yet.'],
+            ]);
+        }
     }
 
     /**
