@@ -7,6 +7,7 @@ use App\Http\Controllers\API\V1\GroupController;
 use App\Http\Controllers\API\V1\GroupInvitationController;
 use App\Http\Controllers\API\V1\HomeController;
 use App\Http\Controllers\API\V1\NotificationController;
+use App\Http\Controllers\API\V1\PushTokenController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
@@ -25,6 +26,8 @@ Route::prefix('v1')->group(function (): void {
         Route::get('notifications', [NotificationController::class, 'index']);
         Route::patch('notifications/read-all', [NotificationController::class, 'markAllAsRead']);
         Route::patch('notifications/{notification}/read', [NotificationController::class, 'markAsRead']);
+        Route::post('notifications/push-tokens', [PushTokenController::class, 'store']);
+        Route::delete('notifications/push-tokens', [PushTokenController::class, 'destroy']);
 
         Route::get('balances', [BalanceController::class, 'index']);
         Route::post('balances/groups/{group}/users/{user}/settle', [BalanceController::class, 'markSettled']);

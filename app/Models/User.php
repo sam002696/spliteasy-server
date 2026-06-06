@@ -67,6 +67,11 @@ class User extends Authenticatable
         return $this->hasMany(ActivityRecipient::class);
     }
 
+    public function pushTokens(): HasMany
+    {
+        return $this->hasMany(UserPushToken::class);
+    }
+
     /**
      * Get the attributes that should be cast.
      *

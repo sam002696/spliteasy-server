@@ -3,13 +3,21 @@
 namespace App\Services\Activity;
 
 use App\Enums\ActivityType;
+use App\Events\NotificationCreated;
 use App\Models\ActivityLog;
 use App\Models\Group;
 use App\Models\User;
+use App\Services\Notification\NotificationPayloadService;
+use App\Services\Notification\NotificationVisibilityService;
 use Illuminate\Support\Collection;
 
 class ActivityLogService
 {
+    public function __construct(
+        private readonly NotificationVisibilityService $notificationVisibilityService,
+        private readonly NotificationPayloadService $notificationPayloadService
+    ) {}
+
     /**
      * @param  array<string, mixed>  $metadata
      * @param  iterable<int, int|User>  $recipients
@@ -28,12 +36,31 @@ class ActivityLogService
             'type' => $type->value,
             'title' => $title,
             'metadata' => $metadata,
-        ]);
+        ])->load(['group', 'actor']);
 
-        foreach ($this->normalizeRecipientIds($recipients) as $userId) {
-            $activity->recipients()->create([
+        $recipientIds = $this->normalizeRecipientIds($recipients);
+        $users = User::query()
+            ->whereIn('id', $recipientIds)
+            ->get()
+            ->keyBy('id');
+
+        foreach ($recipientIds as $userId) {
+            $recipient = $activity->recipients()->create([
                 'user_id' => $userId,
             ]);
+
+            $user = $users->get($userId);
+
+            if (! $user || ! $this->notificationVisibilityService->shouldShowToUser($activity, $user)) {
+                continue;
+            }
+
+            $recipient->setRelation('activityLog', $activity);
+
+            NotificationCreated::dispatch(
+                $user->id,
+                $this->notificationPayloadService->build($recipient, $user)
+            );
         }
 
         return $activity;

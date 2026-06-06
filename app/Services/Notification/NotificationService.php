@@ -2,7 +2,6 @@
 
 namespace App\Services\Notification;
 
-use App\Enums\ActivityType;
 use App\Models\ActivityLog;
 use App\Models\ActivityRecipient;
 use App\Models\User;
@@ -12,6 +11,10 @@ use Illuminate\Validation\ValidationException;
 
 class NotificationService
 {
+    public function __construct(
+        private readonly NotificationVisibilityService $notificationVisibilityService
+    ) {}
+
     /**
      * @throws ValidationException
      */
@@ -31,7 +34,7 @@ class NotificationService
             ->with(['activityLog.group', 'activityLog.actor'])
             ->where('user_id', $user->id)
             ->whereHas('activityLog', function ($query) use ($user): void {
-                $this->applyVisibleActivityFilter($query, $user);
+                $this->notificationVisibilityService->applyVisibleActivityFilter($query, $user);
             })
             ->when($filter === 'unread', fn ($query) => $query->whereNull('read_at'))
             ->when($filter === 'read', fn ($query) => $query->whereNotNull('read_at'))
@@ -48,7 +51,7 @@ class NotificationService
     {
         return ActivityRecipient::query()
             ->where('user_id', $user->id)
-            ->whereHas('activityLog', fn ($query) => $this->applyVisibleActivityFilter($query, $user))
+            ->whereHas('activityLog', fn ($query) => $this->notificationVisibilityService->applyVisibleActivityFilter($query, $user))
             ->whereNull('read_at')
             ->count();
     }
@@ -73,7 +76,7 @@ class NotificationService
     {
         return ActivityRecipient::query()
             ->where('user_id', $user->id)
-            ->whereHas('activityLog', fn ($query) => $this->applyVisibleActivityFilter($query, $user))
+            ->whereHas('activityLog', fn ($query) => $this->notificationVisibilityService->applyVisibleActivityFilter($query, $user))
             ->whereNull('read_at')
             ->update([
                 'read_at' => now(),
@@ -88,40 +91,5 @@ class NotificationService
         if ($notification->user_id !== $user->id) {
             throw new AuthorizationException('This notification does not belong to you.');
         }
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function hiddenActivityTypes(): array
-    {
-        return [
-            ActivityType::GroupCreated->value,
-            ActivityType::GroupDeleted->value,
-        ];
-    }
-
-    private function applyVisibleActivityFilter($query, User $user): void
-    {
-        $query
-            ->whereNotIn('type', $this->hiddenActivityTypes())
-            ->where(function ($query) use ($user): void {
-                $query
-                    ->whereNotIn('type', $this->hiddenSelfActivityTypes())
-                    ->orWhere('actor_user_id', '!=', $user->id)
-                    ->orWhereNull('actor_user_id');
-            });
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function hiddenSelfActivityTypes(): array
-    {
-        return [
-            ActivityType::GroupInvitationSent->value,
-            ActivityType::ExpenseCreated->value,
-            ActivityType::SettlementCreated->value,
-        ];
     }
 }
