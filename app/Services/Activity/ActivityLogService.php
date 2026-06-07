@@ -4,6 +4,7 @@ namespace App\Services\Activity;
 
 use App\Enums\ActivityType;
 use App\Events\NotificationCreated;
+use App\Jobs\SendExpoPushNotificationJob;
 use App\Models\ActivityLog;
 use App\Models\Group;
 use App\Models\User;
@@ -56,11 +57,14 @@ class ActivityLogService
             }
 
             $recipient->setRelation('activityLog', $activity);
+            $payload = $this->notificationPayloadService->build($recipient, $user);
 
             NotificationCreated::dispatch(
                 $user->id,
-                $this->notificationPayloadService->build($recipient, $user)
+                $payload
             );
+
+            SendExpoPushNotificationJob::dispatch($user->id, $payload)->afterCommit();
         }
 
         return $activity;
