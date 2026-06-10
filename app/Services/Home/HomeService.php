@@ -33,8 +33,16 @@ class HomeService
         $owedToYou = 0.0;
         $youOwe = 0.0;
         $currency = $groups->first()?->base_currency ?? 'BDT';
+        $hasFinancialActivity = false;
 
         foreach ($groups as $group) {
+            if (! $hasFinancialActivity) {
+                $hasFinancialActivity = $group->expenses->contains(function ($expense) use ($user): bool {
+                    return $expense->paid_by_user_id === $user->id
+                        || $expense->splits->contains('user_id', $user->id);
+                });
+            }
+
             foreach ($group->expenses->filter(fn ($expense): bool => $expense->status === ExpenseStatus::Open) as $expense) {
                 foreach ($expense->splits as $split) {
                     if ($split->settled_at || $split->user_id === $expense->paid_by_user_id) {
@@ -52,20 +60,32 @@ class HomeService
             }
         }
 
+        $netAmount = $owedToYou - $youOwe;
+        $netPosition = match (true) {
+            ! $hasFinancialActivity => [
+                'type' => 'no_activity',
+                'label' => 'No expenses yet',
+            ],
+            $netAmount > 0 => [
+                'type' => 'owed_to_you',
+                'label' => 'Net owed to you',
+            ],
+            $netAmount < 0 => [
+                'type' => 'you_owe',
+                'label' => 'Net you owe',
+            ],
+            default => [
+                'type' => 'settled',
+                'label' => 'You are settled',
+            ],
+        };
+
         return [
             'currency' => $currency,
             'net_position' => [
-                'amount' => number_format(abs($owedToYou - $youOwe), 2, '.', ''),
-                'type' => match (true) {
-                    $owedToYou > $youOwe => 'owed_to_you',
-                    $youOwe > $owedToYou => 'you_owe',
-                    default => 'settled',
-                },
-                'label' => match (true) {
-                    $owedToYou > $youOwe => 'Net owed to you',
-                    $youOwe > $owedToYou => 'Net you owe',
-                    default => 'You are settled',
-                },
+                'amount' => number_format(abs($netAmount), 2, '.', ''),
+                'type' => $netPosition['type'],
+                'label' => $netPosition['label'],
             ],
             'owed_to_you' => number_format($owedToYou, 2, '.', ''),
             'you_owe' => number_format($youOwe, 2, '.', ''),
