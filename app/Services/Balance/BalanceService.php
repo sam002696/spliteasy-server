@@ -106,6 +106,10 @@ class BalanceService
         $youOweByUser = [];
         $owedToYouExpenses = [];
         $youOweExpenses = [];
+        $owedToYouTotals = [];
+        $youOweTotals = [];
+        $owedToYouSettled = [];
+        $youOweSettled = [];
         $pairExpenses = [];
         $pairUsers = [];
 
@@ -117,23 +121,31 @@ class BalanceService
 
                 if ($expense->paid_by_user_id === $user->id) {
                     $otherUserId = $split->user_id;
+                    $amount = (float) $split->amount;
                     $pairUsers[$otherUserId] = $split->user;
                     $pairExpenses[$otherUserId][] = $expense;
+                    $owedToYouTotals[$otherUserId] = ($owedToYouTotals[$otherUserId] ?? 0) + $amount;
 
                     if ($expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
-                        $owedToYouByUser[$otherUserId] = ($owedToYouByUser[$otherUserId] ?? 0) + (float) $split->amount;
+                        $owedToYouByUser[$otherUserId] = ($owedToYouByUser[$otherUserId] ?? 0) + $amount;
                         $owedToYouExpenses[$otherUserId][] = $expense;
+                    } else {
+                        $owedToYouSettled[$otherUserId] = ($owedToYouSettled[$otherUserId] ?? 0) + $amount;
                     }
                 }
 
                 if ($split->user_id === $user->id) {
                     $otherUserId = $expense->paid_by_user_id;
+                    $amount = (float) $split->amount;
                     $pairUsers[$otherUserId] = $expense->paidBy;
                     $pairExpenses[$otherUserId][] = $expense;
+                    $youOweTotals[$otherUserId] = ($youOweTotals[$otherUserId] ?? 0) + $amount;
 
                     if ($expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
-                        $youOweByUser[$otherUserId] = ($youOweByUser[$otherUserId] ?? 0) + (float) $split->amount;
+                        $youOweByUser[$otherUserId] = ($youOweByUser[$otherUserId] ?? 0) + $amount;
                         $youOweExpenses[$otherUserId][] = $expense;
+                    } else {
+                        $youOweSettled[$otherUserId] = ($youOweSettled[$otherUserId] ?? 0) + $amount;
                     }
                 }
             }
@@ -146,7 +158,11 @@ class BalanceService
                 $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId),
                 $amount,
                 'owed_to_you',
-                $owedToYouExpenses[$otherUserId] ?? []
+                $owedToYouExpenses[$otherUserId] ?? [],
+                $this->settledPercentage(
+                    $owedToYouTotals[$otherUserId] ?? 0,
+                    $owedToYouSettled[$otherUserId] ?? 0
+                )
             ))
             ->merge(
                 collect($youOweByUser)
@@ -156,7 +172,11 @@ class BalanceService
                         $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId),
                         $amount,
                         'you_owe',
-                        $youOweExpenses[$otherUserId] ?? []
+                        $youOweExpenses[$otherUserId] ?? [],
+                        $this->settledPercentage(
+                            $youOweTotals[$otherUserId] ?? 0,
+                            $youOweSettled[$otherUserId] ?? 0
+                        )
                     ))
             );
 
@@ -175,15 +195,22 @@ class BalanceService
                         $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId),
                         0.0,
                         'settled',
-                        $expenses
+                        $expenses,
+                        100
                     ))
             )
             ->sortByDesc(fn (array $balance): float => (float) $balance['amount'])
             ->values();
     }
 
-    private function balanceData(Group $group, User $otherUser, float $amount, string $type, array $expenses): array
-    {
+    private function balanceData(
+        Group $group,
+        User $otherUser,
+        float $amount,
+        string $type,
+        array $expenses,
+        int $settledPercentage
+    ): array {
         $latestExpense = collect($expenses)->sortByDesc('expense_date')->first();
 
         return [
@@ -212,7 +239,7 @@ class BalanceService
                 'expense_date' => $latestExpense->expense_date,
                 'status' => $latestExpense->status->value,
             ] : null,
-            'settled_percentage' => $type === 'settled' ? 100 : 0,
+            'settled_percentage' => $settledPercentage,
             'action' => match ($type) {
                 'owed_to_you' => 'remind',
                 'you_owe' => 'mark_settled',
@@ -271,15 +298,13 @@ class BalanceService
         return round($amount, 2);
     }
 
-    private function settledPercentage(float $grossAmount, float $netAmount): int
+    private function settledPercentage(float $totalAmount, float $settledAmount): int
     {
-        if ($grossAmount <= 0) {
-            return round($netAmount, 2) === 0.0 ? 100 : 0;
+        if ($totalAmount <= 0) {
+            return 100;
         }
 
-        $settledAmount = max($grossAmount - abs($netAmount), 0);
-
-        return (int) min(round(($settledAmount / $grossAmount) * 100), 100);
+        return (int) min(round(($settledAmount / $totalAmount) * 100), 100);
     }
 
     private function label(string $type, string $name): string

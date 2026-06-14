@@ -34,21 +34,21 @@ class SettlementService
             ]);
         }
 
-        $netAmount = $this->calculateCurrentUserNetAmount($group, $currentUser, $paidToUser);
+        $amountOwed = $this->calculateDirectionalAmountOwed($group, $currentUser, $paidToUser);
 
-        if ($netAmount >= 0) {
+        if ($amountOwed <= 0) {
             throw ValidationException::withMessages([
                 'balance' => ['You do not owe this user in this group.'],
             ]);
         }
 
-        return DB::transaction(function () use ($group, $currentUser, $paidToUser, $netAmount): Settlement {
+        return DB::transaction(function () use ($group, $currentUser, $paidToUser, $amountOwed): Settlement {
             $settlement = Settlement::query()->create([
                 'group_id' => $group->id,
                 'created_by_user_id' => $currentUser->id,
                 'paid_by_user_id' => $currentUser->id,
                 'paid_to_user_id' => $paidToUser->id,
-                'amount' => number_format(abs($netAmount), 2, '.', ''),
+                'amount' => number_format($amountOwed, 2, '.', ''),
                 'currency' => $group->base_currency,
                 'settled_at' => now(),
             ]);
@@ -93,33 +93,25 @@ class SettlementService
         }
     }
 
-    private function calculateCurrentUserNetAmount(Group $group, User $currentUser, User $otherUser): float
+    private function calculateDirectionalAmountOwed(Group $group, User $currentUser, User $paidToUser): float
     {
         $group->loadMissing(['expenses.splits']);
 
-        $netAmount = 0.0;
+        $amount = 0.0;
 
         foreach ($group->expenses->filter(fn ($expense): bool => $expense->status === ExpenseStatus::Open) as $expense) {
             foreach ($expense->splits as $split) {
-                if ($split->settled_at) {
+                if ($split->settled_at || $split->user_id === $expense->paid_by_user_id) {
                     continue;
                 }
 
-                if ($split->user_id === $expense->paid_by_user_id) {
-                    continue;
-                }
-
-                if ($expense->paid_by_user_id === $currentUser->id && $split->user_id === $otherUser->id) {
-                    $netAmount += (float) $split->amount;
-                }
-
-                if ($expense->paid_by_user_id === $otherUser->id && $split->user_id === $currentUser->id) {
-                    $netAmount -= (float) $split->amount;
+                if ($expense->paid_by_user_id === $paidToUser->id && $split->user_id === $currentUser->id) {
+                    $amount += (float) $split->amount;
                 }
             }
         }
 
-        return round($netAmount, 2);
+        return round($amount, 2);
     }
 
     private function markCoveredExpenseSplitsAsSettled(Group $group, User $currentUser, User $paidToUser, float $settlementAmount): void

@@ -29,7 +29,10 @@ class GroupResource extends JsonResource
                 'total_group_spend' => number_format($totalGroupSpend, 2, '.', ''),
                 'current_user_position' => $currentUserPosition,
                 'position_percentage' => $this->positionPercentage($currentUserPosition['amount'], $totalGroupSpend),
-                'settled_percentage' => $this->settledPercentage(),
+                'settled_percentage' => $this->currentUserDirectionalSettledPercentage(
+                    $currentUserId,
+                    $currentUserPosition['type']
+                ),
             ],
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
@@ -171,6 +174,51 @@ class GroupResource extends JsonResource
             ->count();
 
         return (int) round(($settledExpenses / $this->expenses->count()) * 100);
+    }
+
+    private function currentUserDirectionalSettledPercentage(?int $currentUserId, string $positionType): int
+    {
+        if (! $currentUserId || ! $this->relationLoaded('expenses') || $this->expenses->isEmpty()) {
+            return 0;
+        }
+
+        if ($positionType === 'settled') {
+            return 100;
+        }
+
+        $totalAmount = 0.0;
+        $settledAmount = 0.0;
+
+        foreach ($this->expenses as $expense) {
+            foreach ($expense->splits as $split) {
+                if ($split->user_id === $expense->paid_by_user_id) {
+                    continue;
+                }
+
+                $isCurrentDirection = match ($positionType) {
+                    'owed_to_you' => $expense->paid_by_user_id === $currentUserId,
+                    'you_owe' => $split->user_id === $currentUserId,
+                    default => false,
+                };
+
+                if (! $isCurrentDirection) {
+                    continue;
+                }
+
+                $amount = (float) $split->amount;
+                $totalAmount += $amount;
+
+                if ($expense->status !== ExpenseStatus::Open || $split->settled_at) {
+                    $settledAmount += $amount;
+                }
+            }
+        }
+
+        if ($totalAmount <= 0) {
+            return 0;
+        }
+
+        return (int) min(round(($settledAmount / $totalAmount) * 100), 100);
     }
 
     private function expenseCounts(): array

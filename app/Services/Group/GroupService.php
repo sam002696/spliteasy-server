@@ -313,20 +313,19 @@ class GroupService
     {
         $this->ensureGroupMember($group, $user);
 
-        $openExpenses = $group->expenses()
+        $expenses = $group->expenses()
             ->with(['paidBy', 'splits.user'])
-            ->where('status', ExpenseStatus::Open->value)
             ->get();
 
         $owedToYouByUser = [];
         $youOweByUser = [];
+        $owedToYouTotals = [];
+        $youOweTotals = [];
+        $owedToYouSettled = [];
+        $youOweSettled = [];
 
-        foreach ($openExpenses as $expense) {
+        foreach ($expenses as $expense) {
             foreach ($expense->splits as $split) {
-                if ($split->settled_at) {
-                    continue;
-                }
-
                 if ($split->user_id === $expense->paid_by_user_id) {
                     continue;
                 }
@@ -334,11 +333,23 @@ class GroupService
                 $amount = (float) $split->amount;
 
                 if ($expense->paid_by_user_id === $user->id) {
-                    $owedToYouByUser[$split->user_id] = ($owedToYouByUser[$split->user_id] ?? 0) + $amount;
+                    $owedToYouTotals[$split->user_id] = ($owedToYouTotals[$split->user_id] ?? 0) + $amount;
+
+                    if ($expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
+                        $owedToYouByUser[$split->user_id] = ($owedToYouByUser[$split->user_id] ?? 0) + $amount;
+                    } else {
+                        $owedToYouSettled[$split->user_id] = ($owedToYouSettled[$split->user_id] ?? 0) + $amount;
+                    }
                 }
 
                 if ($split->user_id === $user->id) {
-                    $youOweByUser[$expense->paid_by_user_id] = ($youOweByUser[$expense->paid_by_user_id] ?? 0) + $amount;
+                    $youOweTotals[$expense->paid_by_user_id] = ($youOweTotals[$expense->paid_by_user_id] ?? 0) + $amount;
+
+                    if ($expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
+                        $youOweByUser[$expense->paid_by_user_id] = ($youOweByUser[$expense->paid_by_user_id] ?? 0) + $amount;
+                    } else {
+                        $youOweSettled[$expense->paid_by_user_id] = ($youOweSettled[$expense->paid_by_user_id] ?? 0) + $amount;
+                    }
                 }
             }
         }
@@ -346,7 +357,7 @@ class GroupService
         $members = $group->members()->get()->keyBy('id');
         $balances = collect($owedToYouByUser)
             ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
-            ->map(function (float $amount, int $userId) use ($members): array {
+            ->map(function (float $amount, int $userId) use ($members, $owedToYouTotals, $owedToYouSettled): array {
                 $member = $members->get($userId);
 
                 return [
@@ -358,12 +369,16 @@ class GroupService
                     'amount' => number_format($amount, 2, '.', ''),
                     'type' => 'owed_to_you',
                     'label' => "{$member->name} owes you",
+                    'settled_percentage' => $this->directionalSettledPercentage(
+                        $owedToYouTotals[$userId] ?? 0,
+                        $owedToYouSettled[$userId] ?? 0
+                    ),
                 ];
             })
             ->merge(
                 collect($youOweByUser)
                     ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
-                    ->map(function (float $amount, int $userId) use ($members): array {
+                    ->map(function (float $amount, int $userId) use ($members, $youOweTotals, $youOweSettled): array {
                         $member = $members->get($userId);
 
                         return [
@@ -375,6 +390,10 @@ class GroupService
                             'amount' => number_format($amount, 2, '.', ''),
                             'type' => 'you_owe',
                             'label' => "You owe {$member->name}",
+                            'settled_percentage' => $this->directionalSettledPercentage(
+                                $youOweTotals[$userId] ?? 0,
+                                $youOweSettled[$userId] ?? 0
+                            ),
                         ];
                     })
             )
@@ -405,6 +424,15 @@ class GroupService
             ],
             'balances' => $balances,
         ];
+    }
+
+    private function directionalSettledPercentage(float $totalAmount, float $settledAmount): int
+    {
+        if ($totalAmount <= 0) {
+            return 100;
+        }
+
+        return (int) min(round(($settledAmount / $totalAmount) * 100), 100);
     }
 
     /**
