@@ -304,7 +304,11 @@ class BalanceService
             return 100;
         }
 
-        return (int) min(round(($settledAmount / $totalAmount) * 100), 100);
+        if (round($settledAmount, 2) >= round($totalAmount, 2)) {
+            return 100;
+        }
+
+        return (int) min(floor(($settledAmount / $totalAmount) * 100), 99);
     }
 
     private function label(string $type, string $name): string
