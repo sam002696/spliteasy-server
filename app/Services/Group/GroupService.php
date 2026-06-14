@@ -318,7 +318,8 @@ class GroupService
             ->where('status', ExpenseStatus::Open->value)
             ->get();
 
-        $pairwiseBalances = [];
+        $owedToYouByUser = [];
+        $youOweByUser = [];
 
         foreach ($openExpenses as $expense) {
             foreach ($expense->splits as $split) {
@@ -333,17 +334,17 @@ class GroupService
                 $amount = (float) $split->amount;
 
                 if ($expense->paid_by_user_id === $user->id) {
-                    $pairwiseBalances[$split->user_id] = ($pairwiseBalances[$split->user_id] ?? 0) + $amount;
+                    $owedToYouByUser[$split->user_id] = ($owedToYouByUser[$split->user_id] ?? 0) + $amount;
                 }
 
                 if ($split->user_id === $user->id) {
-                    $pairwiseBalances[$expense->paid_by_user_id] = ($pairwiseBalances[$expense->paid_by_user_id] ?? 0) - $amount;
+                    $youOweByUser[$expense->paid_by_user_id] = ($youOweByUser[$expense->paid_by_user_id] ?? 0) + $amount;
                 }
             }
         }
 
         $members = $group->members()->get()->keyBy('id');
-        $balances = collect($pairwiseBalances)
+        $balances = collect($owedToYouByUser)
             ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
             ->map(function (float $amount, int $userId) use ($members): array {
                 $member = $members->get($userId);
@@ -354,17 +355,34 @@ class GroupService
                         'name' => $member->name,
                         'email' => $member->email,
                     ],
-                    'amount' => number_format(abs($amount), 2, '.', ''),
-                    'type' => $amount > 0 ? 'owed_to_you' : 'you_owe',
-                    'label' => $amount > 0
-                        ? "{$member->name} owes you"
-                        : "You owe {$member->name}",
+                    'amount' => number_format($amount, 2, '.', ''),
+                    'type' => 'owed_to_you',
+                    'label' => "{$member->name} owes you",
                 ];
             })
+            ->merge(
+                collect($youOweByUser)
+                    ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
+                    ->map(function (float $amount, int $userId) use ($members): array {
+                        $member = $members->get($userId);
+
+                        return [
+                            'user' => [
+                                'id' => $member->id,
+                                'name' => $member->name,
+                                'email' => $member->email,
+                            ],
+                            'amount' => number_format($amount, 2, '.', ''),
+                            'type' => 'you_owe',
+                            'label' => "You owe {$member->name}",
+                        ];
+                    })
+            )
+            ->sortByDesc(fn (array $balance): float => (float) $balance['amount'])
             ->values()
             ->all();
 
-        $currentUserNetAmount = collect($pairwiseBalances)->sum();
+        $currentUserNetAmount = collect($owedToYouByUser)->sum() - collect($youOweByUser)->sum();
         $currentUserType = match (true) {
             $currentUserNetAmount > 0 => 'owed_to_you',
             $currentUserNetAmount < 0 => 'you_owe',

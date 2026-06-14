@@ -26,9 +26,9 @@ class BalanceService
     {
         $filter = strtolower($filter);
 
-        if (! in_array($filter, ['open', 'you_owe', 'settled'], true)) {
+        if (! in_array($filter, ['open', 'owed_to_you', 'you_owe', 'settled'], true)) {
             throw ValidationException::withMessages([
-                'filter' => ['Invalid balance filter. Allowed values are open, you_owe, settled.'],
+                'filter' => ['Invalid balance filter. Allowed values are open, owed_to_you, you_owe, settled.'],
             ]);
         }
 
@@ -50,6 +50,7 @@ class BalanceService
             'filter' => $filter,
             'counts' => [
                 'open' => $allBalances->filter(fn (array $balance): bool => $balance['type'] !== 'settled')->count(),
+                'owed_to_you' => $allBalances->filter(fn (array $balance): bool => $balance['type'] === 'owed_to_you')->count(),
                 'you_owe' => $allBalances->filter(fn (array $balance): bool => $balance['type'] === 'you_owe')->count(),
                 'settled' => $allBalances->filter(fn (array $balance): bool => $balance['type'] === 'settled')->count(),
             ],
@@ -82,7 +83,7 @@ class BalanceService
 
         return $this->activityLogService->record(
             ActivityType::BalanceReminderSent,
-            "{$sender->name} reminded you to settle {$group->base_currency} " . number_format($amountOwed, 2),
+            "{$sender->name} reminded you to settle {$group->base_currency} ".number_format($amountOwed, 2),
             $group,
             $sender,
             [
@@ -101,9 +102,11 @@ class BalanceService
 
     private function buildGroupBalances(Group $group, User $user): Collection
     {
-        $pairBalances = [];
+        $owedToYouByUser = [];
+        $youOweByUser = [];
+        $owedToYouExpenses = [];
+        $youOweExpenses = [];
         $pairExpenses = [];
-        $pairGrossAmounts = [];
         $pairUsers = [];
 
         foreach ($group->expenses as $expense) {
@@ -112,92 +115,117 @@ class BalanceService
                     continue;
                 }
 
-                $otherUserId = null;
-                $amount = 0.0;
-
                 if ($expense->paid_by_user_id === $user->id) {
                     $otherUserId = $split->user_id;
                     $pairUsers[$otherUserId] = $split->user;
-                    $amount = (float) $split->amount;
+                    $pairExpenses[$otherUserId][] = $expense;
+
+                    if ($expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
+                        $owedToYouByUser[$otherUserId] = ($owedToYouByUser[$otherUserId] ?? 0) + (float) $split->amount;
+                        $owedToYouExpenses[$otherUserId][] = $expense;
+                    }
                 }
 
                 if ($split->user_id === $user->id) {
                     $otherUserId = $expense->paid_by_user_id;
                     $pairUsers[$otherUserId] = $expense->paidBy;
-                    $amount = -((float) $split->amount);
-                }
-
-                if (! $otherUserId) {
-                    continue;
-                }
-
-                if ($otherUserId) {
                     $pairExpenses[$otherUserId][] = $expense;
-                }
 
-                if ($otherUserId && $expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
-                    $pairBalances[$otherUserId] = ($pairBalances[$otherUserId] ?? 0) + $amount;
-                    $pairGrossAmounts[$otherUserId] = ($pairGrossAmounts[$otherUserId] ?? 0) + abs($amount);
+                    if ($expense->status === ExpenseStatus::Open && is_null($split->settled_at)) {
+                        $youOweByUser[$otherUserId] = ($youOweByUser[$otherUserId] ?? 0) + (float) $split->amount;
+                        $youOweExpenses[$otherUserId][] = $expense;
+                    }
                 }
             }
         }
 
-        return collect($pairExpenses)
-            ->map(function (array $expenses, int $otherUserId) use ($group, $pairBalances, $pairGrossAmounts, $pairUsers): array {
-                $otherUser = $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId);
-                $netAmount = round($pairBalances[$otherUserId] ?? 0, 2);
-                $type = match (true) {
-                    $netAmount > 0 => 'owed_to_you',
-                    $netAmount < 0 => 'you_owe',
-                    default => 'settled',
-                };
-                $latestExpense = collect($expenses)->sortByDesc('expense_date')->first();
+        $balances = collect($owedToYouByUser)
+            ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
+            ->map(fn (float $amount, int $otherUserId): array => $this->balanceData(
+                $group,
+                $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId),
+                $amount,
+                'owed_to_you',
+                $owedToYouExpenses[$otherUserId] ?? []
+            ))
+            ->merge(
+                collect($youOweByUser)
+                    ->filter(fn (float $amount): bool => round($amount, 2) !== 0.0)
+                    ->map(fn (float $amount, int $otherUserId): array => $this->balanceData(
+                        $group,
+                        $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId),
+                        $amount,
+                        'you_owe',
+                        $youOweExpenses[$otherUserId] ?? []
+                    ))
+            );
 
-                return [
-                    'id' => "{$group->id}:{$otherUserId}",
-                    'group' => [
-                        'id' => $group->id,
-                        'name' => $group->name,
-                        'category' => $group->category,
-                        'base_currency' => $group->base_currency,
-                    ],
-                    'user' => [
-                        'id' => $otherUser->id,
-                        'name' => $otherUser->name,
-                        'email' => $otherUser->email,
-                        'initials' => $this->initials($otherUser->name),
-                    ],
-                    'amount' => number_format(abs($netAmount), 2, '.', ''),
-                    'currency' => $group->base_currency,
-                    'type' => $type,
-                    'label' => $this->label($type, $otherUser->name),
-                    'latest_expense' => $latestExpense ? [
-                        'id' => $latestExpense->id,
-                        'description' => $latestExpense->description,
-                        'amount' => $latestExpense->amount,
-                        'currency' => $latestExpense->currency,
-                        'expense_date' => $latestExpense->expense_date,
-                        'status' => $latestExpense->status->value,
-                    ] : null,
-                    'settled_percentage' => $this->settledPercentage(
-                        (float) ($pairGrossAmounts[$otherUserId] ?? 0),
-                        $netAmount
-                    ),
-                    'action' => match ($type) {
-                        'owed_to_you' => 'remind',
-                        'you_owe' => 'mark_settled',
-                        default => null,
-                    },
-                ];
-            })
+        $openBalanceKeys = collect($owedToYouByUser)
+            ->keys()
+            ->merge(collect($youOweByUser)->keys())
+            ->unique()
+            ->map(fn ($userId): int => (int) $userId);
+
+        return $balances
+            ->merge(
+                collect($pairExpenses)
+                    ->reject(fn (array $expenses, int $otherUserId): bool => $openBalanceKeys->contains($otherUserId))
+                    ->map(fn (array $expenses, int $otherUserId): array => $this->balanceData(
+                        $group,
+                        $pairUsers[$otherUserId] ?? $group->members->firstWhere('id', $otherUserId),
+                        0.0,
+                        'settled',
+                        $expenses
+                    ))
+            )
             ->sortByDesc(fn (array $balance): float => (float) $balance['amount'])
             ->values();
+    }
+
+    private function balanceData(Group $group, User $otherUser, float $amount, string $type, array $expenses): array
+    {
+        $latestExpense = collect($expenses)->sortByDesc('expense_date')->first();
+
+        return [
+            'id' => "{$group->id}:{$otherUser->id}:{$type}",
+            'group' => [
+                'id' => $group->id,
+                'name' => $group->name,
+                'category' => $group->category,
+                'base_currency' => $group->base_currency,
+            ],
+            'user' => [
+                'id' => $otherUser->id,
+                'name' => $otherUser->name,
+                'email' => $otherUser->email,
+                'initials' => $this->initials($otherUser->name),
+            ],
+            'amount' => number_format($amount, 2, '.', ''),
+            'currency' => $group->base_currency,
+            'type' => $type,
+            'label' => $this->label($type, $otherUser->name),
+            'latest_expense' => $latestExpense ? [
+                'id' => $latestExpense->id,
+                'description' => $latestExpense->description,
+                'amount' => $latestExpense->amount,
+                'currency' => $latestExpense->currency,
+                'expense_date' => $latestExpense->expense_date,
+                'status' => $latestExpense->status->value,
+            ] : null,
+            'settled_percentage' => $type === 'settled' ? 100 : 0,
+            'action' => match ($type) {
+                'owed_to_you' => 'remind',
+                'you_owe' => 'mark_settled',
+                default => null,
+            },
+        ];
     }
 
     private function matchesFilter(array $balance, string $filter): bool
     {
         return match ($filter) {
             'open' => $balance['type'] !== 'settled',
+            'owed_to_you' => $balance['type'] === 'owed_to_you',
             'you_owe' => $balance['type'] === 'you_owe',
             'settled' => $balance['type'] === 'settled',
         };
