@@ -40,4 +40,8 @@ return [
         'default_title' => env('EXPO_PUSH_DEFAULT_TITLE', 'SplitEasy'),
     ],
 
+    'password_reset' => [
+        'url' => env('PASSWORD_RESET_URL', 'spliteasy://reset-password'),
+    ],
+
 ];
